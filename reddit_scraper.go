@@ -3,17 +3,19 @@ package main
 import (
 	"fmt"
 	"net/http"
+	_ "strconv"
 
 	"github.com/yhat/scrape"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
 
+// TODO: Implement a score field for Post
 type Post struct {
 	author    string
 	title     string
-	text      string
 	subreddit string
+	url       string
 	comments  []Comment
 }
 
@@ -23,7 +25,7 @@ type Comment struct {
 }
 
 func main() {
-	fmt.Println("Hello there. I'm a placeholder for when the main function serves no purpose.")
+	fmt.Println("starting...")
 
 	resp, err := http.Get("https://www.reddit.com")
 	if err != nil {
@@ -68,11 +70,35 @@ func getcomments(n *html.Node, post *Post) {
 
 func parsepost(n *html.Node) Post {
 	post := Post{}
-	author, ok := scrape.Find(n, scrape.ByClass("title"))
-	if ok {
-		post.author = scrape.Text(author.FirstChild)
-	}
 
+	// get the author. uses a scrape inbuilt matcher
+	auth, _ := scrape.Find(n, scrape.ByClass("title"))
+	author := scrape.Text(auth.FirstChild)
+
+	// get the subreddit. This requires a custom matcher.
+	matcher := func(n *html.Node) bool {
+		if n.DataAtom == atom.A && n.Parent != nil {
+			return scrape.Attr(n, "class") == "subreddit hover may-blank"
+		}
+		return false
+	}
+	sub, _ := scrape.Find(n, matcher)
+	subreddit := scrape.Text(sub)
+
+	// get the url to the comments. requires custom matcher.
+	matcher = func(n *html.Node) bool {
+		if n.DataAtom == atom.Ul && n.FirstChild != nil {
+			return scrape.Attr(n, "class") == "flat-list buttons" && scrape.Attr(n.FirstChild, "class") == "first"
+		}
+		return false
+	}
+	ul, _ := scrape.Find(n, matcher)          // ul is a list of two buttons: one that links to a post's comments page, one a "share" function
+	li := ul.FirstChild                       // the first list item of ul -- this will always be the comments page link.
+	url := scrape.Attr(li.FirstChild, "href") // finally, the url found in the list item.
+
+	post.author = author
+	post.subreddit = subreddit
+	post.url = url
 	return post
 }
 func parsecomment(n *html.Node) Comment {

@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
-	_ "strconv"
+	"strings"
+	"sync"
 
 	"github.com/yhat/scrape"
 	"golang.org/x/net/html"
@@ -16,16 +17,11 @@ type Post struct {
 	title     string
 	subreddit string
 	url       string
-	comments  []Comment
 }
 
-type Comment struct {
-	author string
-	text   string
-}
+var wg sync.WaitGroup
 
 func main() {
-	fmt.Println("starting...")
 
 	resp, err := http.Get("https://www.reddit.com")
 	if err != nil {
@@ -54,26 +50,39 @@ func main() {
 	}
 
 	articles := scrape.FindAll(table, matcher)
-	if ok {
-		//var posts []Post
-		for i := 0; i < len(articles); i++ {
-			post := parsepost(articles[i])
-			fmt.Println(post)
-		}
+	var posts []Post
+
+	for i := 0; i < len(articles); i++ {
+		wg.Add(1)
+		go func(n *html.Node) {
+			post := parsepost(n)
+			posts = append(posts, post)
+			wg.Done()
+		}(articles[i])
+	}
+
+	wg.Wait()
+
+	for i := 0; i < len(posts); i++ {
+		printpost(posts[i])
 	}
 
 }
 
-func getcomments(n *html.Node, post *Post) {
-	// pass
+// Basically for debugging, and because go prints structs about as well as a gopher speaks english.
+func printpost(post Post) {
+	fmt.Println("Title: ", post.title)
+	fmt.Println("Author: ", post.author)
+	fmt.Println("Subreddit: ", post.subreddit)
+	fmt.Println("url: ", post.url)
 }
 
 func parsepost(n *html.Node) Post {
 	post := Post{}
 
-	// get the author. uses a scrape inbuilt matcher
-	auth, _ := scrape.Find(n, scrape.ByClass("title"))
-	author := scrape.Text(auth.FirstChild)
+	// get the title. uses a scrape inbuilt matcher
+	title_scrape, _ := scrape.Find(n, scrape.ByClass("title"))
+	title := scrape.Text(title_scrape.FirstChild)
 
 	// get the subreddit. This requires a custom matcher.
 	matcher := func(n *html.Node) bool {
@@ -96,12 +105,20 @@ func parsepost(n *html.Node) Post {
 	li := ul.FirstChild                       // the first list item of ul -- this will always be the comments page link.
 	url := scrape.Attr(li.FirstChild, "href") // finally, the url found in the list item.
 
-	post.author = author
+	// get the author. Uses custom matcher and magic.
+	matcher = func(n *html.Node) bool {
+		if n.DataAtom == atom.A && n.Parent.DataAtom == atom.P {
+			return strings.Contains(scrape.Attr(n, "href"), "/user/")
+		}
+		return false
+	}
+	author_scrape, _ := scrape.Find(n, matcher)
+	author := scrape.Text(author_scrape)
+
+	post.title = title
 	post.subreddit = subreddit
 	post.url = url
+	post.author = author
+
 	return post
-}
-func parsecomment(n *html.Node) Comment {
-	// pass
-	return Comment{}
 }
